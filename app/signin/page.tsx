@@ -4,6 +4,8 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
+import { auth } from '../firebaseConfig';
+import { signInWithEmailAndPassword } from 'firebase/auth';
 
 export default function SignIn() {
     const router = useRouter();
@@ -17,20 +19,15 @@ export default function SignIn() {
         setLoading(true);
 
         try {
-            const res = await fetch('/api/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(formData),
-            });
-
-            if (res.ok) {
-                router.push('/dashboard');
+            await signInWithEmailAndPassword(auth, formData.email, formData.password);
+            router.push('/dashboard');
+        } catch (err: any) {
+            console.error(err);
+            if (err.code === 'auth/invalid-credential') {
+                setError('Invalid email or password.');
             } else {
-                const data = await res.json();
-                setError(data.error || 'Login failed');
+                setError('Login failed. Please try again.');
             }
-        } catch {
-            setError('An error occurred. Please try again.');
         } finally {
             setLoading(false);
         }

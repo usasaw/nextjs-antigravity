@@ -4,6 +4,9 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
+import { auth, database } from '../firebaseConfig';
+import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
+import { ref, set } from 'firebase/database';
 
 export default function SignUp() {
     const router = useRouter();
@@ -17,20 +20,33 @@ export default function SignUp() {
         setLoading(true);
 
         try {
-            const res = await fetch('/api/register', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(formData),
+            // 1. Create user in Firebase Auth
+            const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
+            const user = userCredential.user;
+
+            // 2. Update display name
+            await updateProfile(user, {
+                displayName: formData.name
             });
 
-            if (res.ok) {
-                router.push('/signin');
+            // 3. Save user data to Realtime Database
+            await set(ref(database, 'users/' + user.uid), {
+                id: user.uid,
+                name: formData.name,
+                email: formData.email,
+                created_at: new Date().toISOString()
+            });
+
+            router.push('/dashboard');
+        } catch (err: any) {
+            console.error(err);
+            if (err.code === 'auth/email-already-in-use') {
+                setError('Email is already in use.');
+            } else if (err.code === 'auth/weak-password') {
+                setError('Password should be at least 6 characters.');
             } else {
-                const data = await res.json();
-                setError(data.error || 'Registration failed');
+                setError('Registration failed. Please try again.');
             }
-        } catch {
-            setError('An error occurred. Please try again.');
         } finally {
             setLoading(false);
         }
