@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { pool } from '@/lib/db';
+import { db } from '@/lib/firebase';
 import { jwtVerify } from 'jose';
 import { cookies } from 'next/headers';
 
@@ -14,19 +14,23 @@ export async function GET() {
     try {
         const secret = new TextEncoder().encode(process.env.JWT_SECRET || 'secret');
         const { payload } = await jwtVerify(token, secret);
-        const userId = payload.sub;
+        const userId = payload.sub as string;
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const [rows]: any = await pool.execute(
-            'SELECT id, name, email FROM users WHERE id = ?',
-            [userId]
-        );
+        const userRef = db.ref(`users/${userId}`);
+        const snapshot = await userRef.once('value');
 
-        if (rows.length === 0) {
+        if (!snapshot.exists()) {
             return NextResponse.json({ error: 'User not found' }, { status: 404 });
         }
 
-        return NextResponse.json(rows[0]);
+        const user = snapshot.val();
+
+        // Return only safe fields
+        return NextResponse.json({
+            id: user.id,
+            name: user.name,
+            email: user.email
+        });
     } catch (error) {
         console.error('Error fetching user:', error);
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

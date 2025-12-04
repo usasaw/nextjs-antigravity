@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
-import { pool } from '@/lib/db';
+import { db } from '@/lib/firebase';
 import bcrypt from 'bcryptjs';
+import { v4 as uuidv4 } from 'uuid';
 
 export async function POST(request: Request) {
     try {
@@ -10,20 +11,29 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
         }
 
-        const hashedPassword = await bcrypt.hash(password, 10);
+        // Check if user already exists
+        const usersRef = db.ref('users');
+        const snapshot = await usersRef.orderByChild('email').equalTo(email).once('value');
 
-        await pool.execute(
-            'INSERT INTO users (name, email, password) VALUES (?, ?, ?)',
-            [name, email, hashedPassword]
-        );
+        if (snapshot.exists()) {
+            return NextResponse.json({ error: 'Email already exists' }, { status: 409 });
+        }
+
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const userId = uuidv4();
+
+        await usersRef.child(userId).set({
+            id: userId,
+            name,
+            email,
+            password: hashedPassword,
+            created_at: new Date().toISOString()
+        });
 
         return NextResponse.json({ message: 'User created successfully' }, { status: 201 });
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (error: any) {
         console.error('Registration error:', error);
-        if (error.code === 'ER_DUP_ENTRY') {
-            return NextResponse.json({ error: 'Email already exists' }, { status: 409 });
-        }
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
 }

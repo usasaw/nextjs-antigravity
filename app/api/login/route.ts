@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { pool } from '@/lib/db';
+import { db } from '@/lib/firebase';
 import bcrypt from 'bcryptjs';
 import { SignJWT } from 'jose';
 
@@ -11,21 +11,23 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
         }
 
+        const usersRef = db.ref('users');
+        const snapshot = await usersRef.orderByChild('email').equalTo(email).once('value');
+
+        const userData = snapshot.val();
+        const user = userData ? Object.values(userData)[0] : null;
+
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const [rows]: any = await pool.execute(
-            'SELECT * FROM users WHERE email = ?',
-            [email]
-        );
-
-        const user = rows[0];
-
-        if (!user || !(await bcrypt.compare(password, user.password))) {
+        if (!user || !(await bcrypt.compare(password, (user as any).password))) {
             return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
         }
 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const typedUser = user as any;
+
         // Create JWT
         const secret = new TextEncoder().encode(process.env.JWT_SECRET || 'secret');
-        const token = await new SignJWT({ sub: user.id, email: user.email, name: user.name })
+        const token = await new SignJWT({ sub: typedUser.id, email: typedUser.email, name: typedUser.name })
             .setProtectedHeader({ alg: 'HS256' })
             .setExpirationTime('24h')
             .sign(secret);

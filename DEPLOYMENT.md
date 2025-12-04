@@ -1,40 +1,26 @@
 # Deployment Guide (Netlify)
 
-This application is built with Next.js and uses a MySQL database. Because it uses Server-Side Rendering (SSR) and API routes, it requires a Node.js runtime, which Netlify supports.
+This application is built with Next.js and uses Firebase Realtime Database. Because it uses Server-Side Rendering (SSR) and API routes, it requires a Node.js runtime, which Netlify supports.
 
 ## Prerequisites
 
 1.  **Netlify Account**: [Sign up here](https://www.netlify.com/).
-2.  **Cloud MySQL Database**: Since Netlify cannot access your `localhost`, you need a cloud-hosted database.
-    *   **Options**:
-        *   [PlanetScale](https://planetscale.com/) (Recommended for MySQL)
-        *   [Aiven](https://aiven.io/mysql)
-        *   [AWS RDS](https://aws.amazon.com/rds/)
-        *   [DigitalOcean Managed Databases](https://www.digitalocean.com/products/managed-databases-mysql)
+2.  **Firebase Project**: You need a Firebase project with Realtime Database enabled.
+    *   Go to [Firebase Console](https://console.firebase.google.com/).
+    *   Create a new project.
+    *   Enable **Realtime Database** and **Authentication** (if used).
+    *   Generate a **Service Account Private Key** from Project Settings > Service Accounts.
 
-## Step 1: Set up your Cloud Database
+## Step 1: Set up Firebase
 
-1.  Create a MySQL database instance on your chosen provider.
-2.  Get the connection details:
-    *   **Host** (e.g., `aws.connect.psdb.cloud`)
-    *   **User**
-    *   **Password**
-    *   **Database Name**
-    *   **Port** (usually 3306)
-3.  **Important**: If your provider requires SSL (most do), ensure you have the option enabled. This app is configured to enable SSL if `DB_SSL=true` is set.
+1.  Create a Firebase project if you haven't already.
+2.  Get the configuration details:
+    *   **Project ID**
+    *   **Client Email**
+    *   **Private Key**
+    *   **Database URL**
 
-## Step 2: Initialize the Cloud Database
-
-You need to create the tables (`users`, `tasks`) in your new cloud database.
-
-1.  Update your local `.env` file temporarily to point to your **Cloud Database** (or create a separate script).
-2.  Run the init script locally:
-    ```bash
-    npx tsx scripts/init-db.ts
-    ```
-    *Note: This will connect to the cloud DB and create the tables.*
-
-## Step 3: Deploy to Netlify
+## Step 2: Deploy to Netlify
 
 1.  **Push your code to GitHub** (or GitLab/Bitbucket).
 2.  Log in to Netlify and click **"Add new site"** > **"Import an existing project"**.
@@ -43,18 +29,16 @@ You need to create the tables (`users`, `tasks`) in your new cloud database.
     *   **Build command**: `npm run build`
     *   **Publish directory**: `.next`
 5.  **Environment Variables** (Click "Show advanced" or go to Site Settings > Environment variables after creation):
-    *   Add the following variables matching your Cloud DB credentials:
-        *   `DB_HOST`
-        *   `DB_USER`
-        *   `DB_PASSWORD`
-        *   `DB_NAME`
-        *   `DB_PORT`
-        *   `DB_SSL`: Set to `true`
-        *   `JWT_SECRET`: Set to a strong random string (e.g., generated via `openssl rand -base64 32`).
+    *   Add the following variables matching your Firebase credentials:
+        *   `FIREBASE_PROJECT_ID`
+        *   `FIREBASE_CLIENT_EMAIL`
+        *   `FIREBASE_PRIVATE_KEY`
+        *   `FIREBASE_DATABASE_URL`
+        *   `JWT_SECRET`: Set to a strong random string.
 
 6.  Click **"Deploy site"**.
 
 ## Troubleshooting
 
-*   **Database Connection Error**: Double-check your Environment Variables in Netlify. Ensure `DB_SSL` is set to `true` if using a provider like PlanetScale or Aiven.
-*   **Build Failed**: Check the Netlify deploy logs. Common issues include missing dependencies or linting errors (which should be caught locally).
+*   **Database Connection Error**: Double-check your Environment Variables in Netlify. Ensure the private key is correctly formatted (newlines might need handling if pasted directly).
+*   **Build Failed**: Check the Netlify deploy logs.

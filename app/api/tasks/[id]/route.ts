@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { pool } from '@/lib/db';
+import { db } from '@/lib/firebase';
 import { jwtVerify } from 'jose';
 import { cookies } from 'next/headers';
 
@@ -12,7 +12,7 @@ async function getUserId() {
     try {
         const secret = new TextEncoder().encode(process.env.JWT_SECRET || 'secret');
         const { payload } = await jwtVerify(token, secret);
-        return payload.sub;
+        return payload.sub as string;
     } catch {
         return null;
     }
@@ -28,28 +28,28 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
         const { id } = await params;
         const { is_completed, is_important } = await request.json();
 
-        const updates = [];
-        const values = [];
+        const taskRef = db.ref(`tasks/${id}`);
+        const snapshot = await taskRef.once('value');
 
-        if (is_completed !== undefined) {
-            updates.push('is_completed = ?');
-            values.push(is_completed);
-        }
-        if (is_important !== undefined) {
-            updates.push('is_important = ?');
-            values.push(is_important);
+        if (!snapshot.exists()) {
+            return NextResponse.json({ error: 'Task not found' }, { status: 404 });
         }
 
-        if (updates.length === 0) {
+        const task = snapshot.val();
+        if (task.user_id !== userId) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+        }
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const updates: any = {};
+        if (is_completed !== undefined) updates.is_completed = is_completed;
+        if (is_important !== undefined) updates.is_important = is_important;
+
+        if (Object.keys(updates).length === 0) {
             return NextResponse.json({ message: 'No updates' });
         }
 
-        values.push(id, userId);
-
-        await pool.execute(
-            `UPDATE tasks SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`,
-            values
-        );
+        await taskRef.update(updates);
 
         return NextResponse.json({ message: 'Task updated' });
     } catch (error) {
@@ -66,11 +66,19 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
         }
 
         const { id } = await params;
+        const taskRef = db.ref(`tasks/${id}`);
+        const snapshot = await taskRef.once('value');
 
-        await pool.execute(
-            'DELETE FROM tasks WHERE id = ? AND user_id = ?',
-            [id, userId]
-        );
+        if (!snapshot.exists()) {
+            return NextResponse.json({ message: 'Task deleted' }); // Idempotent
+        }
+
+        const task = snapshot.val();
+        if (task.user_id !== userId) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+        }
+
+        await taskRef.remove();
 
         return NextResponse.json({ message: 'Task deleted' });
     } catch (error) {
