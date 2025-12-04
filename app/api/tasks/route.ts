@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
-import { pool } from '@/lib/db';
+import { db } from '@/lib/firebase';
 import { jwtVerify } from 'jose';
 import { cookies } from 'next/headers';
+import { v4 as uuidv4 } from 'uuid';
 
 async function getUserId() {
     const cookieStore = await cookies();
@@ -12,7 +13,7 @@ async function getUserId() {
     try {
         const secret = new TextEncoder().encode(process.env.JWT_SECRET || 'secret');
         const { payload } = await jwtVerify(token, secret);
-        return payload.sub;
+        return payload.sub as string;
     } catch {
         return null;
     }
@@ -28,21 +29,22 @@ export async function GET(request: Request) {
         const { searchParams } = new URL(request.url);
         const search = searchParams.get('search') || '';
 
-        let query = 'SELECT * FROM tasks WHERE user_id = ?';
+        const tasksRef = db.ref('tasks');
+        const snapshot = await tasksRef.orderByChild('user_id').equalTo(userId).once('value');
+
+        const tasksData = snapshot.val();
+        let tasks = tasksData ? Object.values(tasksData) : [];
+
+        // Sort by created_at DESC
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const params: any[] = [userId];
+        tasks.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
         if (search) {
-            query += ' AND title LIKE ?';
-            params.push(`%${search}%`);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            tasks = tasks.filter((task: any) => task.title.toLowerCase().includes(search.toLowerCase()));
         }
 
-        query += ' ORDER BY created_at DESC';
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const [rows]: any = await pool.execute(query, params);
-
-        return NextResponse.json(rows);
+        return NextResponse.json(tasks);
     } catch (error) {
         console.error('Error fetching tasks:', error);
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
@@ -61,10 +63,17 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Title is required' }, { status: 400 });
         }
 
-        await pool.execute(
-            'INSERT INTO tasks (user_id, title) VALUES (?, ?)',
-            [userId, title]
-        );
+        const taskId = uuidv4();
+        const tasksRef = db.ref('tasks');
+
+        await tasksRef.child(taskId).set({
+            id: taskId,
+            user_id: userId,
+            title,
+            is_completed: false,
+            is_important: false,
+            created_at: new Date().toISOString()
+        });
 
         return NextResponse.json({ message: 'Task created' }, { status: 201 });
     } catch (error) {
