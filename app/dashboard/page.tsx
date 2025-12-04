@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -12,73 +12,69 @@ import {
     LogOut,
     User
 } from 'lucide-react';
+import { auth, database } from '../firebaseConfig';
+import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
+import { ref, onValue, push, update, remove, set } from 'firebase/database';
 
 type Task = {
-    id: number;
+    id: string;
     title: string;
     is_completed: boolean;
     is_important: boolean;
-};
-
-type UserProfile = {
-    id: number;
-    name: string;
-    email: string;
+    created_at: string;
+    user_id: string;
 };
 
 export default function Dashboard() {
     const router = useRouter();
     const [tasks, setTasks] = useState<Task[]>([]);
-    const [user, setUser] = useState<UserProfile | null>(null);
+    const [user, setUser] = useState<FirebaseUser | null>(null);
     const [newTask, setNewTask] = useState("");
     const [search, setSearch] = useState("");
     const [filter, setFilter] = useState<'all' | 'important' | 'completed'>('all');
     const [loading, setLoading] = useState(true);
     const [showProfileMenu, setShowProfileMenu] = useState(false);
 
-    const fetchUser = useCallback(async () => {
-        try {
-            const res = await fetch('/api/auth/me');
-            if (res.ok) {
-                const data = await res.json();
-                setUser(data);
-            }
-        } catch (error) {
-            console.error('Error fetching user:', error);
-        }
-    }, []);
-
-    const fetchTasks = useCallback(async (searchQuery = "") => {
-        try {
-            const res = await fetch(`/api/tasks?search=${encodeURIComponent(searchQuery)}`);
-            if (res.status === 401) {
-                router.push('/signin');
-                return;
-            }
-            const data = await res.json();
-            setTasks(data);
-        } catch (error) {
-            console.error('Error fetching tasks:', error);
-        } finally {
-            setLoading(false);
-        }
-    }, [router]);
-
     useEffect(() => {
-        fetchUser();
-        fetchTasks(search);
-    }, [search, fetchTasks, fetchUser]);
+        const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+            if (currentUser) {
+                setUser(currentUser);
+                // Listen for tasks
+                const tasksRef = ref(database, 'tasks');
+                onValue(tasksRef, (snapshot) => {
+                    const data = snapshot.val();
+                    if (data) {
+                        const taskList = Object.values(data) as Task[];
+                        // Filter by user_id matching current user.
+                        const userTasks = taskList.filter((t) => t.user_id === currentUser.uid);
+
+                        // Sort by created_at DESC
+                        userTasks.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+                        setTasks(userTasks);
+                    } else {
+                        setTasks([]);
+                    }
+                    setLoading(false);
+                });
+            } else {
+                router.push('/signin');
+            }
+        });
+
+        return () => unsubscribe();
+    }, [router]);
 
     const handleLogout = async () => {
         try {
-            await fetch('/api/auth/logout', { method: 'POST' });
+            await signOut(auth);
             router.push('/signin');
         } catch (error) {
             console.error('Error logging out:', error);
         }
     };
 
-    const getInitials = (name: string) => {
+    const getInitials = (name: string | null) => {
+        if (!name) return 'U';
         return name
             .split(' ')
             .map(n => n[0])
@@ -89,75 +85,62 @@ export default function Dashboard() {
 
     const addTask = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!newTask.trim()) return;
+        if (!newTask.trim() || !user) return;
 
         try {
-            const res = await fetch('/api/tasks', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ title: newTask }),
+            const tasksRef = ref(database, 'tasks');
+            const newTaskRef = push(tasksRef);
+            await set(newTaskRef, {
+                id: newTaskRef.key,
+                user_id: user.uid,
+                title: newTask,
+                is_completed: false,
+                is_important: false,
+                created_at: new Date().toISOString()
             });
-
-            if (res.ok) {
-                setNewTask("");
-                fetchTasks(search);
-            }
+            setNewTask("");
         } catch (error) {
             console.error('Error adding task:', error);
         }
     };
 
-    const toggleTask = async (id: number, currentStatus: boolean) => {
+    const toggleTask = async (id: string, currentStatus: boolean) => {
         try {
-            // Optimistic update
-            setTasks(tasks.map(t => t.id === id ? { ...t, is_completed: !currentStatus } : t));
-
-            await fetch(`/api/tasks/${id}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ is_completed: !currentStatus }),
-            });
+            const taskRef = ref(database, `tasks/${id}`);
+            await update(taskRef, { is_completed: !currentStatus });
         } catch (error) {
             console.error('Error updating task:', error);
-            fetchTasks(search); // Revert on error
         }
     };
 
-    const toggleImportant = async (id: number, currentStatus: boolean) => {
+    const toggleImportant = async (id: string, currentStatus: boolean) => {
         try {
-            // Optimistic update
-            setTasks(tasks.map(t => t.id === id ? { ...t, is_important: !currentStatus } : t));
-
-            await fetch(`/api/tasks/${id}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ is_important: !currentStatus }),
-            });
+            const taskRef = ref(database, `tasks/${id}`);
+            await update(taskRef, { is_important: !currentStatus });
         } catch (error) {
             console.error('Error updating task:', error);
-            fetchTasks(search); // Revert on error
         }
     };
 
-    const deleteTask = async (id: number) => {
+    const deleteTask = async (id: string) => {
         try {
-            // Optimistic update
-            setTasks(tasks.filter(t => t.id !== id));
-
-            await fetch(`/api/tasks/${id}`, {
-                method: 'DELETE',
-            });
+            const taskRef = ref(database, `tasks/${id}`);
+            await remove(taskRef);
         } catch (error) {
             console.error('Error deleting task:', error);
-            fetchTasks(search); // Revert on error
         }
     };
 
     const filteredTasks = tasks.filter(t => {
+        if (search && !t.title.toLowerCase().includes(search.toLowerCase())) return false;
         if (filter === 'important') return t.is_important;
         if (filter === 'completed') return t.is_completed;
         return true;
     });
+
+    if (loading) {
+        return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
+    }
 
     return (
         <div className="min-h-screen bg-background flex">
@@ -229,13 +212,13 @@ export default function Dashboard() {
                                 onClick={() => setShowProfileMenu(!showProfileMenu)}
                                 className="w-8 h-8 rounded-full bg-primary-green text-white flex items-center justify-center text-sm font-medium hover:bg-dark-green transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-green"
                             >
-                                {user ? getInitials(user.name) : <User className="w-4 h-4" />}
+                                {user ? getInitials(user.displayName) : <User className="w-4 h-4" />}
                             </button>
 
                             {showProfileMenu && (
                                 <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-100 py-1 z-50">
                                     <div className="px-4 py-2 border-b border-gray-100">
-                                        <p className="text-sm font-medium text-gray-900">{user?.name}</p>
+                                        <p className="text-sm font-medium text-gray-900">{user?.displayName}</p>
                                         <p className="text-xs text-gray-500 truncate">{user?.email}</p>
                                     </div>
                                     <button
@@ -270,9 +253,7 @@ export default function Dashboard() {
 
                         {/* Tasks */}
                         <div className="space-y-3">
-                            {loading ? (
-                                <div className="text-center py-12 text-gray-400">Loading tasks...</div>
-                            ) : filteredTasks.length === 0 ? (
+                            {filteredTasks.length === 0 ? (
                                 <div className="text-center py-12 text-gray-400">
                                     <p>No tasks found.</p>
                                 </div>
